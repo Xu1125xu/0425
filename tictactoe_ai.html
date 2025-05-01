@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 圈圈叉叉遊戲</title>
+  <style>
+    body { background: #f4f8fb; font-family: Arial, sans-serif; margin: 0; }
+    h2 { text-align: center; color: #1976d2; }
+    #board { display: grid; grid-template-columns: repeat(3, 80px); grid-template-rows: repeat(3, 80px); gap: 8px; justify-content: center; margin: 32px auto; }
+    .cell { width: 80px; height: 80px; background: #fff; border-radius: 12px; box-shadow: 0 2px 8px #0001; display: flex; align-items: center; justify-content: center; font-size: 2.5em; cursor: pointer; transition: background 0.2s; }
+    .cell:hover { background: #e3f2fd; }
+    #status { text-align: center; font-size: 1.2em; margin: 12px 0 24px 0; color: #1976d2; }
+    #restart { display: block; margin: 0 auto 24px auto; padding: 8px 24px; font-size: 1.1em; border-radius: 8px; border: none; background: #1976d2; color: #fff; cursor: pointer; }
+    #restart:disabled { background: #90caf9; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <h2>和 Gemini AI 玩圈圈叉叉</h2>
+  <div id="status">你的回合（你是 O）</div>
+  <div id="board"></div>
+  <button id="restart">重新開始</button>
+  <script>
+    // --- Gemini API 設定 ---
+    const API_KEY = "AIzaSyCyRu0y777tSkKV_HRY8ViazjJu8fufjNc";
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`;
+
+    // --- 遊戲邏輯 ---
+    let board = Array(9).fill("");
+    let userTurn = true;
+    let gameOver = false;
+    const boardDiv = document.getElementById('board');
+    const statusDiv = document.getElementById('status');
+    const restartBtn = document.getElementById('restart');
+
+    restartBtn.onclick = () => {
+      board = Array(9).fill("");
+      userTurn = true;
+      gameOver = false;
+      statusDiv.textContent = "你的回合（你是 O）";
+      restartBtn.disabled = true;
+      renderBoard();
+    };
+
+    // 修正：每次重新開始都要移除所有 cell 的 pointerEvents 限制
+    function renderBoard() {
+      boardDiv.innerHTML = "";
+      board.forEach((cell, i) => {
+        const div = document.createElement('div');
+        div.className = 'cell';
+        div.textContent = cell;
+        div.onclick = () => handleUserMove(i);
+        // 只要該格有內容就禁用，其他都可點擊
+        if (cell) div.style.pointerEvents = 'none';
+        else div.style.pointerEvents = '';
+        boardDiv.appendChild(div);
+      });
+    }
+
+    function checkWinner() {
+      const lines = [
+        [0,1,2],[3,4,5],[6,7,8],
+        [0,3,6],[1,4,7],[2,5,8],
+        [0,4,8],[2,4,6]
+      ];
+      for (const [a,b,c] of lines) {
+        if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a];
+      }
+      if (board.every(cell => cell)) return "平手";
+      return null;
+    }
+
+    function endGame(winner) {
+      gameOver = true;
+      if (winner === "O") statusDiv.textContent = "你贏了！🎉";
+      else if (winner === "X") statusDiv.textContent = "AI 贏了！🤖";
+      else statusDiv.textContent = "平手！";
+      restartBtn.disabled = false;
+    }
+
+    function handleUserMove(i) {
+      if (!userTurn || board[i] || gameOver) return;
+      board[i] = "O";
+      userTurn = false;
+      renderBoard();
+      const winner = checkWinner();
+      if (winner) {
+        endGame(winner);
+        return;
+      }
+      statusDiv.textContent = "AI 思考中...";
+      aiMove();
+    }
+
+    async function aiMove() {
+      // 將棋盤狀態轉成字串
+      const boardStr = board.map(cell => cell || "_").join("");
+      const prompt = `你是圈圈叉叉高手，請幫我在這個棋盤狀態下（O=玩家，X=AI）幫 AI 下最佳一步，只回傳一個 0~8 的數字（代表格子編號），不要多餘說明。棋盤狀態：${boardStr}`;
+      const body = JSON.stringify({
+        contents: [ { role: "user", parts: [ { text: prompt } ] } ]
+      });
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body
+        });
+        const data = await res.json();
+        let aiText = "";
+        if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
+          aiText = data.candidates[0].content.parts[0].text.trim();
+        }
+        // 取所有 0~8 的數字，依序嘗試下棋，直到成功
+        const matches = aiText.match(/[0-8]/g) || [];
+        let moved = false;
+        for (const m of matches) {
+          const idx = parseInt(m);
+          if (!isNaN(idx) && !board[idx]) {
+            board[idx] = "X";
+            moved = true;
+            break;
+          }
+        }
+        if (!moved) {
+          // 若 AI 回傳無效，隨機下
+          const empty = board.map((c,i)=>c?null:i).filter(i=>i!==null);
+          if (empty.length) {
+            board[empty[Math.floor(Math.random()*empty.length)]] = "X";
+          }
+        }
+      } catch (e) {
+        statusDiv.textContent = "AI 連線失敗，請重試！";
+        gameOver = true;
+        restartBtn.disabled = false;
+        return;
+      }
+      renderBoard();
+      const winner = checkWinner();
+      if (winner) {
+        endGame(winner);
+        return;
+      }
+      userTurn = true;
+      statusDiv.textContent = "你的回合（你是 O）";
+    }
+
+    restartBtn.onclick = () => {
+      board = Array(9).fill("");
+      userTurn = true;
+      gameOver = false;
+      statusDiv.textContent = "你的回合（你是 O）";
+      restartBtn.disabled = true;
+      renderBoard();
+    };
+
+    // 初始化
+    restartBtn.disabled = true;
+    renderBoard();
+  </script>
+</body>
+</html>
